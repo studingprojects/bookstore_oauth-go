@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -9,7 +10,7 @@ import (
 	"time"
 
 	"github.com/mercadolibre/golang-restclient/rest"
-	"github.com/studingprojects/bookstore_oauth-go/oauth/errors"
+	rest_errors "github.com/studingprojects/bookstore_utils-go/rest_errors"
 )
 
 const (
@@ -46,7 +47,7 @@ func GetCallerId(request *http.Request) int64 {
 	return parseHeaderInt(request, headerXCallerId)
 }
 
-func AuthenticateRequest(request *http.Request) *errors.RestErr {
+func AuthenticateRequest(request *http.Request) rest_errors.RestErr {
 	if request == nil {
 		return nil
 	}
@@ -54,11 +55,11 @@ func AuthenticateRequest(request *http.Request) *errors.RestErr {
 
 	accessTokenId := strings.TrimSpace(request.URL.Query().Get("access_token"))
 	if accessTokenId == "" {
-		return errors.NewBadRequestError("access_token is required")
+		return rest_errors.NewBadRequestError("access_token is required")
 	}
 	at, err := getAccessToken(accessTokenId)
 	if err != nil {
-		if err.Status == http.StatusNotFound {
+		if err.Status() == http.StatusNotFound {
 			return nil
 		}
 		return err
@@ -77,25 +78,24 @@ func cleanRequest(request *http.Request) {
 	request.Header.Del(headerXCallerId)
 }
 
-func getAccessToken(accessToken string) (*AccessToken, *errors.RestErr) {
+func getAccessToken(accessToken string) (*AccessToken, rest_errors.RestErr) {
 	response := oauthClient.Get(fmt.Sprintf("/oauth/access_token/%s", accessToken))
 	if response == nil || response.Response == nil {
-		return nil, errors.NewBadRequestError("oauth service: invalid parameters")
+		return nil, rest_errors.NewBadRequestError("oauth service: invalid parameters")
 	}
 	if response.StatusCode > 299 {
-		var restErr errors.RestErr
+		var restErr rest_errors.RestErr
 		if err := json.Unmarshal(response.Bytes(), &restErr); err != nil {
-			return nil, errors.NewInternalServerError("oauth service: could not parse oauth response")
+			return nil, rest_errors.NewInternalServerError("oauth service: could not parse oauth response", err)
 		}
-		return nil, &errors.RestErr{
-			Status:  restErr.Status,
-			Message: fmt.Sprintf("user service: %s", restErr.Message),
-			Error:   "external_service_error",
-		}
+		return nil, rest_errors.NewExternalServiceError(
+			fmt.Sprintf("user service: %s", restErr.Message()),
+			errors.New("external_service_error"),
+		)
 	}
 	var at AccessToken
 	if err := json.Unmarshal(response.Bytes(), &at); err != nil {
-		return nil, errors.NewInternalServerError("oauth service: could not parse oauth response")
+		return nil, rest_errors.NewInternalServerError("oauth service: could not parse oauth response", err)
 	}
 
 	return &at, nil
